@@ -330,18 +330,12 @@ async def check_in_account(account_info, account_index):
         }
 
         user_info_text = None
-        balance_before = 0.0
         
-        # 签到前获取用户信息和余额
+        # 获取用户信息
         user_info_before = get_user_info(client, headers, site_config)
         if user_info_before:
             print(user_info_before)
             user_info_text = user_info_before
-            
-            # 提取签到前余额
-            import re
-            balance_match = re.search(r'Current balance: \$(\d+(?:\.\d+)?)', user_info_before)
-            balance_before = float(balance_match.group(1)) if balance_match else 0.0
 
         # 执行签到操作
         print(f"[NETWORK] {account_name}: Executing check-in")
@@ -370,35 +364,32 @@ async def check_in_account(account_info, account_index):
                     or result.get("code") == 0
                     or result.get("success")
                 ):
-                    # 签到成功后，重新获取余额来计算奖励
-                    balance_after = 0.0
-                    reward_amount = 0.0
+                    # 直接从API响应中提取签到积分
+                    reward_amount = 0
+                    reward_info = ""
                     
-                    # 等待一小段时间确保余额更新
-                    import time
-                    time.sleep(1)
+                    # 优先从 reward_dollar 字段获取
+                    if "reward_dollar" in result:
+                        reward_amount = result["reward_dollar"]
+                    elif "data" in result and "reward_dollar" in result["data"]:
+                        reward_amount = result["data"]["reward_dollar"]
+                    elif "reward" in result:
+                        # 如果 reward 是以分为单位，转换为美元
+                        reward = result["reward"]
+                        if reward > 1000:  # 假设大于1000是以分为单位
+                            reward_amount = reward // 1000000  # 转换为美元
+                        else:
+                            reward_amount = reward
                     
-                    # 重新获取用户信息
-                    user_info_after = get_user_info(client, headers, site_config)
-                    if user_info_after:
-                        import re
-                        balance_match = re.search(r'Current balance: \$(\d+(?:\.\d+)?)', user_info_after)
-                        if balance_match:
-                            balance_after = float(balance_match.group(1))
-                            
-                            # 计算奖励
-                            reward_amount = balance_after - balance_before
-                            # 只显示正数的奖励
-                            if reward_amount > 0:
-                                reward_text = f"[REWARD] Check-in reward: +${int(reward_amount)}"
-                                if user_info_text:
-                                    user_info_text = f"{user_info_text}\n{reward_text}"
-                                else:
-                                    user_info_text = reward_text
-                                
-                                reward_info = f" (+${reward_amount:.2f})"
-                            else:
-                                reward_info = ""
+                    # 如果有奖励信息，添加到用户信息中
+                    if reward_amount > 0:
+                        reward_text = f"[REWARD] Check-in reward: +${reward_amount}"
+                        if user_info_text:
+                            user_info_text = f"{user_info_text}\n{reward_text}"
+                        else:
+                            user_info_text = reward_text
+                        
+                        reward_info = f" (+${reward_amount})"
                     
                     print(f"[SUCCESS] {account_name}: Check-in successful{reward_info}!")
                     return True, user_info_text
@@ -406,30 +397,30 @@ async def check_in_account(account_info, account_index):
                     error_msg = result.get("msg", result.get("message", "Unknown error"))
                     # 检查是否为"已经签到"的成功提示
                     if any(keyword in error_msg for keyword in ["已经签到", "已经签到了", "不要太贪心", "签到过了"]):
-                        # 对于"已经签到"的情况，也尝试通过余额对比计算奖励
-                        reward_amount = 0.0
-                        # 重新获取当前余额
-                        user_info_after = get_user_info(client, headers, site_config)
-                        if user_info_after:
-                            import re
-                            balance_match = re.search(r'Current balance: \$(\d+(?:\.\d+)?)', user_info_after)
-                            if balance_match:
-                                balance_after = float(balance_match.group(1))
-                                # 如果余额有变化，说明是今天第一次签到
-                                if balance_after > balance_before:
-                                    reward_amount = balance_after - balance_before
-                                    reward_text = f"[REWARD] Today's check-in reward: +${int(reward_amount)}"
-                                    if user_info_text:
-                                        user_info_text = f"{user_info_text}\n{reward_text}"
-                                    else:
-                                        user_info_text = reward_text
-                                else:
-                                    # 余额没有变化，说明已经签到过了
-                                    reward_text = f":info: Already checked in today (no additional reward)"
-                                    if user_info_text:
-                                        user_info_text = f"{user_info_text}\n{reward_text}"
-                                    else:
-                                        user_info_text = reward_text
+                        # 尝试从错误消息中提取积分信息
+                        reward_amount = 0
+                        import re
+                        # 查找类似 "获得3积分" 或 "签到成功+3" 等格式
+                        reward_match = re.search(r'(\d+)\s*积分', error_msg)
+                        if not reward_match:
+                            reward_match = re.search(r'[+＋]\s*(\d+)', error_msg)
+                        if not reward_match:
+                            reward_match = re.search(r'(\d+)', error_msg)
+                        
+                        if reward_match:
+                            reward_amount = int(reward_match.group(1))
+                            reward_text = f"[REWARD] Today's check-in reward: +${reward_amount}"
+                            if user_info_text:
+                                user_info_text = f"{user_info_text}\n{reward_text}"
+                            else:
+                                user_info_text = reward_text
+                        else:
+                            # 如果无法提取，显示为0
+                            reward_text = f"[REWARD] Today's check-in reward: +$0"
+                            if user_info_text:
+                                user_info_text = f"{user_info_text}\n{reward_text}"
+                            else:
+                                user_info_text = reward_text
                         
                         print(f"[SUCCESS] {account_name}: Already checked in today - {error_msg}")
                         return True, user_info_text
