@@ -280,18 +280,24 @@ async def check_in_account(account_info, account_index):
     site_config = SITE_CONFIGS.get(site_type, SITE_CONFIGS["anyrouter.top"])
     print(f"[INFO] {account_name}: Detected site type: {site_type}")
 
-    # 步骤1：获取 WAF cookies
-    waf_cookies = await get_waf_cookies_with_playwright(account_name, site_config)
-    if not waf_cookies:
-        print(f"[FAILED] {account_name}: Unable to get WAF cookies")
-        return False, None
+    # 步骤1：根据网站类型获取 cookies
+    if "husan97x.xyz" in site_config["base_url"]:
+        # 新网站：直接使用 session，无需 WAF cookies
+        print(f"[INFO] {account_name}: Using direct session for WeChat site")
+        all_cookies = user_cookies
+    else:
+        # 传统网站：需要 WAF cookies
+        waf_cookies = await get_waf_cookies_with_playwright(account_name, site_config)
+        if not waf_cookies:
+            print(f"[FAILED] {account_name}: Unable to get WAF cookies")
+            return False, None
+        all_cookies = {**waf_cookies, **user_cookies}
 
     # 步骤2：使用 httpx 进行 API 请求
     client = httpx.Client(http2=True, timeout=30.0)
     
     try:
-        # 合并 WAF cookies 和用户 cookies
-        all_cookies = {**waf_cookies, **user_cookies}
+        # 设置 cookies
         client.cookies.update(all_cookies)
 
         # 设置请求头
@@ -348,12 +354,22 @@ async def check_in_account(account_info, account_index):
                     return True, user_info_text
                 else:
                     error_msg = result.get("msg", result.get("message", "Unknown error"))
-                    print(f"[FAILED] {account_name}: Check-in failed - {error_msg}")
-                    return False, user_info_text
+                    # 检查是否为"已经签到"的成功提示
+                    if any(keyword in error_msg for keyword in ["已经签到", "已经签到了", "不要太贪心", "签到过了"]):
+                        print(f"[SUCCESS] {account_name}: Already checked in today - {error_msg}")
+                        return True, user_info_text
+                    else:
+                        print(f"[FAILED] {account_name}: Check-in failed - {error_msg}")
+                        return False, user_info_text
             except json.JSONDecodeError:
                 # 如果不是 JSON 响应，检查是否包含成功标识
-                if "success" in response.text.lower():
+                response_text = response.text
+                if "success" in response_text.lower():
                     print(f"[SUCCESS] {account_name}: Check-in successful!")
+                    return True, user_info_text
+                # 检查中文签到成功提示
+                elif any(keyword in response_text for keyword in ["已经签到", "已经签到了", "不要太贪心", "签到过了"]):
+                    print(f"[SUCCESS] {account_name}: Already checked in today (Chinese message)")
                     return True, user_info_text
                 else:
                     print(f"[FAILED] {account_name}: Check-in failed - Invalid response format")
