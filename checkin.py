@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AnyRouter.top 自动签到脚本
+多网站自动签到脚本 - 支持 AnyRouter.top 和其他基于相同开源系统的网站
 """
 
 import os
@@ -9,13 +9,53 @@ import asyncio
 import json
 import time
 import httpx
+import re
 from datetime import datetime
-from typing import Union, List, Optional
+from typing import Union, List, Optional, Dict, Any
 from playwright.async_api import async_playwright
 from notify import notify
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# 网站配置映射
+SITE_CONFIGS = {
+    "anyrouter.top": {
+        "base_url": "https://anyrouter.top",
+        "api_user_header": "new-api-user",
+        "signin_endpoint": "/api/user/sign_in",
+        "user_endpoint": "/api/user/self",
+        "waf_login_url": "https://anyrouter.top/login"
+    },
+    "claude.husan97x.xyz": {
+        "base_url": "https://claude.husan97x.xyz", 
+        "api_user_header": "husan-api-user",
+        "signin_endpoint": "/api/user/checkin",
+        "user_endpoint": "/api/user/self",
+        "waf_login_url": "https://claude.husan97x.xyz/login"
+    }
+}
+
+def detect_site_type(account_info: Dict[str, Any]) -> str:
+    """动态检测网站类型"""
+    # 优先从配置中获取 site_type
+    if "site_type" in account_info:
+        site_type = account_info["site_type"]
+        if site_type in SITE_CONFIGS:
+            return site_type
+        # 如果是域名格式，直接返回
+        if site_type in [key.split(".")[0] for key in SITE_CONFIGS.keys()]:
+            for domain in SITE_CONFIGS.keys():
+                if site_type in domain:
+                    return domain
+    
+    # 通过 api_user 数值特征推断（新网站 api_user 通常是短数字）
+    api_user = account_info.get("api_user", "")
+    if api_user and api_user.isdigit() and len(api_user) <= 4:
+        return "claude.husan97x.xyz"
+    
+    # 默认返回原网站
+    return "anyrouter.top"
 
 def load_accounts():
     """从环境变量加载多账号配置"""
@@ -87,7 +127,7 @@ def format_message(message: Union[str, List[str]], use_emoji: bool = False) -> s
     return ""
 
 
-async def get_waf_cookies_with_playwright(account_name: str):
+async def get_waf_cookies_with_playwright(account_name: str, site_config: Dict[str, str]):
     """使用 Playwright 获取 WAF cookies（隐私模式）"""
     print(f"[PROCESSING] {account_name}: Starting browser to get WAF cookies...")
     
@@ -133,7 +173,7 @@ async def get_waf_cookies_with_playwright(account_name: str):
             print(f"[PROCESSING] {account_name}: Step 1: Access login page to get initial cookies...")
             
             # 访问登录页面
-            await page.goto("https://anyrouter.top/login", wait_until="networkidle")
+            await page.goto(site_config["waf_login_url"], wait_until="networkidle")
             
             # 等待页面加载
             await page.wait_for_timeout(3000)
@@ -194,11 +234,12 @@ async def get_waf_cookies_with_playwright(account_name: str):
             return None
 
 
-def get_user_info(client, headers):
+def get_user_info(client, headers, site_config: Dict[str, str]):
     """获取用户信息"""
     try:
+        user_endpoint = site_config["base_url"] + site_config["user_endpoint"]
         response = client.get(
-            "https://anyrouter.top/api/user/self",
+            user_endpoint,
             headers=headers,
             timeout=30
         )
@@ -234,8 +275,13 @@ async def check_in_account(account_info, account_index):
         print(f"[FAILED] {account_name}: Invalid configuration format")
         return False, None
 
+    # 动态检测网站类型
+    site_type = detect_site_type(account_info)
+    site_config = SITE_CONFIGS.get(site_type, SITE_CONFIGS["anyrouter.top"])
+    print(f"[INFO] {account_name}: Detected site type: {site_type}")
+
     # 步骤1：获取 WAF cookies
-    waf_cookies = await get_waf_cookies_with_playwright(account_name)
+    waf_cookies = await get_waf_cookies_with_playwright(account_name, site_config)
     if not waf_cookies:
         print(f"[FAILED] {account_name}: Unable to get WAF cookies")
         return False, None
@@ -254,19 +300,19 @@ async def check_in_account(account_info, account_index):
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             "Accept-Encoding": "gzip, deflate, br, zstd",
-            "Referer": "https://anyrouter.top/console",
-            "Origin": "https://anyrouter.top",
+            "Referer": f"{site_config['base_url']}/console",
+            "Origin": site_config["base_url"],
             "Connection": "keep-alive",
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "same-origin",
-            "new-api-user": api_user,
+            site_config["api_user_header"]: api_user,
         }
 
         user_info_text = None
         
         # 获取用户信息
-        user_info = get_user_info(client, headers)
+        user_info = get_user_info(client, headers, site_config)
         if user_info:
             print(user_info)
             user_info_text = user_info
@@ -281,8 +327,9 @@ async def check_in_account(account_info, account_index):
             "X-Requested-With": "XMLHttpRequest"
         })
         
+        signin_url = site_config["base_url"] + site_config["signin_endpoint"]
         response = client.post(
-            "https://anyrouter.top/api/user/sign_in",
+            signin_url,
             headers=checkin_headers,
             timeout=30
         )
@@ -325,7 +372,7 @@ async def check_in_account(account_info, account_index):
 
 async def main():
     """主函数"""
-    print(f"[SYSTEM] AnyRouter.top multi-account auto check-in script started (using Playwright)")
+    print(f"[SYSTEM] Multi-site auto check-in script started (using Playwright)")
     print(f"[TIME] Execution time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     # 加载账号配置
@@ -391,7 +438,7 @@ async def main():
     print("\n" + console_content)
     
     # 发送通知
-    notify.push_message("AnyRouter Check-in Results", notify_content, msg_type='text')
+    notify.push_message("Multi-site Check-in Results", notify_content, msg_type='text')
 
     # 设置退出码
     sys.exit(0 if success_count > 0 else 1)
