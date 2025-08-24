@@ -13,10 +13,12 @@ import re
 from datetime import datetime
 from typing import Union, List, Optional, Dict, Any
 from playwright.async_api import async_playwright
-from notify import notify
 from dotenv import load_dotenv
-
 load_dotenv()
+from notify import NotificationKit
+
+# 创建通知实例
+notify = NotificationKit()
 
 # 网站配置映射
 SITE_CONFIGS = {
