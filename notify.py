@@ -22,7 +22,7 @@ class NotificationKit:
             raise ValueError("Email configuration not set")
 
         msg = MIMEMultipart()
-        msg['From'] = f'AnyRouter Assistant <{self.email_user}>'
+        msg['From'] = f'Multi-site Check-in Assistant <{self.email_user}>'
         msg['To'] = self.email_to
         msg['Subject'] = title
 
@@ -62,12 +62,25 @@ class NotificationKit:
         if not self.dingding_webhook:
             raise ValueError("DingTalk Webhook not configured")
 
+        # 确保内容是 UTF-8 编码
+        try:
+            title = title.encode('utf-8', errors='ignore').decode('utf-8')
+            content = content.encode('utf-8', errors='ignore').decode('utf-8')
+        except:
+            pass
+
         data = {
             "msgtype": "text",
             "text": {"content": f"{title}\n{content}"}
         }
         with httpx.Client(timeout=30.0) as client:
-            client.post(self.dingding_webhook, json=data)
+            response = client.post(self.dingding_webhook, json=data)
+            if response.status_code != 200:
+                print(f"[DingTalk] HTTP Error: {response.status_code}")
+            else:
+                result = response.json()
+                if result.get('errcode') != 0:
+                    print(f"[DingTalk] API Error: {result.get('errmsg', 'Unknown error')}")
 
     def send_feishu(self, title: str, content: str):
         if not self.feishu_webhook:

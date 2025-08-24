@@ -15,6 +15,12 @@ from typing import Union, List, Optional, Dict, Any
 from playwright.async_api import async_playwright
 from dotenv import load_dotenv
 load_dotenv()
+
+# 设置标准输出编码为 UTF-8
+import codecs
+sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
+sys.stderr = codecs.getwriter('utf-8')(sys.stderr.detach())
+
 from notify import NotificationKit
 
 # 创建通知实例
@@ -123,6 +129,11 @@ def format_message(message: Union[str, List[str]], use_emoji: bool = False) -> s
         result = message
         for key, value in emoji_map.items():
             result = result.replace(f":{key}:", value)
+        # 确保字符串是 UTF-8 编码
+        try:
+            result = result.encode('utf-8', errors='ignore').decode('utf-8')
+        except:
+            pass
         return result
     elif isinstance(message, list):
         return "\n".join(format_message(m, use_emoji) for m in message if isinstance(m, str))
