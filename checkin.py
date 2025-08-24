@@ -423,15 +423,15 @@ async def main():
 
     # 构建通知内容
     summary = [
-        ":stats: Check-in result statistics:",
+        ":stats: Check-in result statistics:---虎三",
         f":success: Success: {success_count}/{total_count}",
         f":fail: Failed: {total_count - success_count}/{total_count}"
     ]
 
     if success_count == total_count:
-        summary.append(":success: All accounts check-in successful!")
+        summary.append(":success: All accounts check-in successful!---虎三")
     elif success_count > 0:
-        summary.append(":warn: Some accounts check-in successful")
+        summary.append(":warn: Some accounts check-in successful---虎三")
     else:
         summary.append(":error: All accounts check-in failed")
 
@@ -456,7 +456,7 @@ async def main():
     print("\n" + console_content)
     
     # 发送通知
-    notify.push_message("Multi-site Check-in Results", notify_content, msg_type='text')
+    notify.push_message("AnyRouter Check-in Results", notify_content, msg_type='text')
 
     # 设置退出码
     sys.exit(0 if success_count > 0 else 1)
